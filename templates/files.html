@@ -1,27 +1,70 @@
 <div class="rounded-2xl border border-base-300 bg-base-100">
+  <div class="border-b border-base-200 px-4 py-3 text-xs text-base-content/60">
+    <div class="flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        class="link link-hover text-xs"
+        hx-get="/files"
+        hx-target="#files"
+        hx-swap="innerHTML"
+      >
+        files
+      </button>
+      {% for crumb in breadcrumbs %}
+        <span>/</span>
+        <button
+          type="button"
+          class="link link-hover text-xs"
+          hx-get="/files?path={{ crumb.path }}"
+          hx-target="#files"
+          hx-swap="innerHTML"
+        >
+          {{ crumb.name }}
+        </button>
+      {% endfor %}
+    </div>
+  </div>
+
   {% if not files %}
     <div class="p-6 text-sm text-base-content/70">
       No files found in <span class="font-semibold">{{ file_root }}</span>.
     </div>
   {% else %}
-    <ul class="h-full">
+    <ul>
       {% for file in files %}
         <li>
-          <button
-            type="button"
-            class="flex w-full items-center px-4 py-2 transition hover:bg-base-200 text-left gap-4"
-            data-file-row
-            data-file-name="{{ file.name }}"
-          >
-            <span class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-base-200 text-primary">
-              <i data-lucide="{{ file.icon }}" class="h-5 w-5"></i>
-            </span>
-            <div class="flex-1">
-              <p class="text-sm font-semibold text-base-content">{{ file.name }}</p>
-              <p class="text-xs text-base-content/60">{{ file.kind | title }}</p>
-            </div>
-            <span class="badge badge-ghost">Select</span>
-          </button>
+          {% if file.kind == "folder" %}
+            <button
+              type="button"
+              class="flex w-full items-center px-4 py-2 transition hover:bg-base-200 text-left gap-4 cursor-pointer"
+              data-folder-row
+              data-folder-path="{{ file.path }}"
+            >
+              <span class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-base-200 text-primary">
+                <i data-lucide="{{ file.icon }}" class="h-5 w-5"></i>
+              </span>
+              <div class="flex-1">
+                <p class="text-sm font-semibold text-base-content">{{ file.name }}</p>
+                <p class="text-xs text-base-content/60">Folder</p>
+              </div>
+            </button>
+          {% else %}
+            <button
+              type="button"
+              class="flex w-full items-center px-4 py-2 transition hover:bg-base-200 text-left gap-4 cursor-pointer"
+              data-file-row
+              data-file-name="{{ file.name }}"
+              data-file-path="{{ file.path }}"
+            >
+              <span class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-base-200 text-primary">
+                <i data-lucide="{{ file.icon }}" class="h-5 w-5"></i>
+              </span>
+              <div class="flex-1">
+                <p class="text-sm font-semibold text-base-content">{{ file.name }}</p>
+                <p class="text-xs text-base-content/60">File</p>
+              </div>
+            </button>
+          {% endif %}
         </li>
       {% endfor %}
     </ul>

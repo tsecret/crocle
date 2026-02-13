@@ -28,6 +28,7 @@ RUN set -eux; \
 
 COPY main.py /app/main.py
 COPY templates /app/templates
+COPY assets /app/assets
 
 EXPOSE 8000
 

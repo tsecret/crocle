@@ -43,29 +43,49 @@ cleanup_task: Optional[asyncio.Task] = None
 ALLOWED_HASHES = {"imohash", "default"}
 DOCKER_CLIENT = docker.from_env()
 
-def list_files(root: Path):
-    if not root.exists() or not root.is_dir():
+def list_files(root: Path, current_path: Path) -> list[dict]:
+    root_resolved = root.resolve()
+    current_resolved = current_path.resolve()
+    if not current_resolved.exists() or not current_resolved.is_dir():
         return []
 
     files = []
-    for entry in root.iterdir():
+    for entry in current_resolved.iterdir():
+        relative_path = entry.relative_to(root_resolved).as_posix()
         if entry.is_dir():
-            files.append({"name": entry.name, "kind": "folder", "icon": "folder"})
+            files.append(
+                {
+                    "name": entry.name,
+                    "kind": "folder",
+                    "icon": "folder",
+                    "path": relative_path,
+                }
+            )
         elif entry.is_file():
-            files.append({"name": entry.name, "kind": "file", "icon": "file"})
+            files.append(
+                {
+                    "name": entry.name,
+                    "kind": "file",
+                    "icon": "file",
+                    "path": relative_path,
+                }
+            )
 
     return sorted(
         files,
         key=lambda item: (item["kind"] != "folder", item["name"].lower()),
     )
 
-def resolve_file(root: Path, name: str) -> Optional[Path]:
+
+def resolve_entry(root: Path, name: str) -> Optional[Path]:
+    if not name:
+        return root.resolve()
     candidate = (root / name).resolve()
     try:
         candidate.relative_to(root.resolve())
     except ValueError:
         return None
-    if not candidate.is_file() and not candidate.is_dir():
+    if not candidate.exists():
         return None
     return candidate
 
@@ -249,12 +269,29 @@ async def index(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/files", response_class=HTMLResponse)
-async def get_files(request: Request):
-    files = list_files(FILE_ROOT)
+async def get_files(request: Request, path: str = ""):
+    current_dir = resolve_entry(FILE_ROOT, path)
+    if not current_dir or not current_dir.is_dir():
+        files = []
+        current_path = ""
+    else:
+        files = list_files(FILE_ROOT, current_dir)
+        current_path = current_dir.resolve().relative_to(FILE_ROOT.resolve()).as_posix()
+    breadcrumbs = []
+    if current_path:
+        segments = current_path.split("/")
+        for index in range(len(segments)):
+            crumb_path = "/".join(segments[: index + 1])
+            breadcrumbs.append({"name": segments[index], "path": crumb_path})
     return templates.TemplateResponse(
         request=request,
         name="files.html",
-        context={"files": files, "file_root": str(FILE_ROOT)}
+        context={
+            "files": files,
+            "file_root": str(FILE_ROOT),
+            "current_path": current_path,
+            "breadcrumbs": breadcrumbs,
+        }
     )
 
 
@@ -274,8 +311,8 @@ async def start_transfer(request: Request):
     if not isinstance(name, str) or not name:
         return JSONResponse({"error": "No file selected."}, status_code=400)
 
-    file_path = resolve_file(FILE_ROOT, name)
-    if not file_path:
+    file_path = resolve_entry(FILE_ROOT, name)
+    if not file_path or not (file_path.is_file() or file_path.is_dir()):
         return JSONResponse({"error": "Invalid file selection."}, status_code=400)
 
     container_file = f"/files/{file_path.name}"
@@ -289,8 +326,8 @@ async def start_transfer(request: Request):
             remove=True,
             tty=True,
             stdin_open=True,
-            mem_limit="50m",
-            labels={"crocle": "true", "crocle.filename": file_path.name},
+            mem_limit="100m",
+            labels={"crocle": "true", "crocle.filename": name},
             environment={"HOME": "/tmp", "XDG_CONFIG_HOME": "/tmp/.config"},
             volumes={resolve_host_files_path(): {"bind": "/files", "mode": "ro"}},
         )

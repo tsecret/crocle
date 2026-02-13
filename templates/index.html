@@ -63,35 +63,12 @@
       <div class="grid gap-8">
         <div class="card bg-base-200 shadow-lg">
           <div class="card-body">
-            <h2 class="card-title">Settings</h2>
-            <div class="mt-4 grid gap-4">
-              <div class="form-control flex flex-row items-center gap-4">
-                <span class="label-text">Hashing algorithm</span>
-                <div class="join w-full" id="hash-select">
-                  <button
-                    type="button"
-                    class="btn join-item btn-active"
-                    data-hash="imohash"
-                  >
-                    imohash
-                  </button>
-                  <button type="button" class="btn join-item" data-hash="default">
-                    default
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="mt-6 rounded-2xl border border-base-300 bg-base-100 p-4">
-              <p class="text-xs font-semibold uppercase tracking-[0.2em] text-base-content/50">
-                Send command
-              </p>
-              <p class="mt-2 text-sm text-base-content/70">
-                The file will be sent using this command:
-              </p>
-              <div class="mt-3 mockup-code bg-neutral text-neutral-content">
-                <pre data-prefix="$" class="whitespace-pre-wrap break-all"><code id="command-preview">croc send --hash imohash &lt;filename&gt;</code></pre>
-              </div>
+            <h2 class="card-title">Send command</h2>
+            <p class="text-sm text-base-content/70">
+              The file will be sent using this command:
+            </p>
+            <div class="mt-3 mockup-code bg-neutral text-neutral-content">
+              <pre data-prefix="$" class="whitespace-pre-wrap break-all"><code id="command-preview">croc send --hash imohash &lt;filename&gt;</code></pre>
             </div>
           </div>
         </div>
@@ -122,15 +99,12 @@
       const selectedFile = document.getElementById('selected-file')
       const selectionStatus = document.getElementById('selection-status')
       const sendButton = document.getElementById('send-button')
-      const hashSelect = document.getElementById('hash-select')
       const commandPreview = document.getElementById('command-preview')
       const currentTransfers = document.getElementById('current-transfers')
 
       function updateCommand() {
-        const fileName = selectedFile.dataset.fileName || '<filename>'
-        const active = hashSelect.querySelector('.btn-active')
-        const hash = active ? active.dataset.hash : 'imohash'
-        const command = `croc send --hash ${hash} ${fileName}`
+        const fileName = selectedFile.dataset.filePath || '<filename>'
+        const command = `croc send --hash imohash ${fileName}`
         commandPreview.textContent = command
       }
 
@@ -138,22 +112,42 @@
         document.querySelectorAll('[data-file-row]').forEach((row) => {
           row.classList.remove('border-primary', 'bg-base-300/50')
         })
+        document.querySelectorAll('[data-folder-row]').forEach((row) => {
+          row.classList.remove('border-primary', 'bg-base-300/50')
+        })
 
         target.classList.add('border-primary', 'bg-base-300/50')
         const fileName = target.dataset.fileName
+        const filePath = target.dataset.filePath || fileName
         selectedFile.textContent = fileName
-        selectedFile.dataset.fileName = fileName
+        selectedFile.dataset.filePath = filePath
+        sendButton.removeAttribute('disabled')
+        sendButton.classList.remove('btn-disabled')
+        updateCommand()
+      }
+
+      function updateFolderSelection(target) {
+        document.querySelectorAll('[data-file-row]').forEach((row) => {
+          row.classList.remove('border-primary', 'bg-base-300/50')
+        })
+        document.querySelectorAll('[data-folder-row]').forEach((row) => {
+          row.classList.remove('border-primary', 'bg-base-300/50')
+        })
+
+        target.classList.add('border-primary', 'bg-base-300/50')
+        const folderPath = target.dataset.folderPath
+        selectedFile.textContent = folderPath
+        selectedFile.dataset.filePath = folderPath
         sendButton.removeAttribute('disabled')
         sendButton.classList.remove('btn-disabled')
         updateCommand()
       }
 
       async function startTransfer() {
-        const fileName = selectedFile.dataset.fileName
+        const fileName = selectedFile.dataset.filePath
         if (!fileName) return
 
-        const active = hashSelect.querySelector('.btn-active')
-        const hash = active ? active.dataset.hash : 'imohash'
+        const hash = 'imohash'
 
         sendButton.setAttribute('disabled', 'disabled')
         sendButton.classList.add('btn-disabled')
@@ -186,22 +180,29 @@
         updateSelection(row)
       })
 
+      document.addEventListener('click', (event) => {
+        const row = event.target.closest('[data-folder-row]')
+        if (!row) return
+        updateFolderSelection(row)
+      })
+
+      document.addEventListener('dblclick', (event) => {
+        const row = event.target.closest('[data-folder-row]')
+        if (!row) return
+        const folderPath = row.dataset.folderPath
+        if (!folderPath) return
+        htmx.ajax('GET', `/files?path=${encodeURIComponent(folderPath)}`, {
+          target: '#files',
+          swap: 'innerHTML',
+        })
+      })
+
       sendButton.addEventListener('click', startTransfer)
 
       document.addEventListener('htmx:afterSwap', () => {
         if (window.lucide) {
           window.lucide.createIcons()
         }
-      })
-
-      hashSelect.addEventListener('click', (event) => {
-        const button = event.target.closest('button[data-hash]')
-        if (!button) return
-        hashSelect.querySelectorAll('button[data-hash]').forEach((item) => {
-          item.classList.remove('btn-active')
-        })
-        button.classList.add('btn-active')
-        updateCommand()
       })
 
       if (window.lucide) {
