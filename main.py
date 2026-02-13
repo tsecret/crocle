@@ -1,42 +1,42 @@
 import asyncio
-import json
-import re
+import os
 import time
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-
+from typing import Optional, List
+import re
+import docker
+from docker.errors import DockerException
+from docker.models.containers import Container
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global cleanup_task
+    cleanup_task = asyncio.create_task(cleanup_waiting_containers())
+    try:
+        yield
+    finally:
+        if cleanup_task and not cleanup_task.done():
+            cleanup_task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
 templates = Jinja2Templates(directory="templates")
 FILE_ROOT = Path("files")
+DOCKER_IMAGE = os.getenv("CROCLE_IMAGE", "schollz/croc")
 
 TRANSFERS = {}
 TRANSFER_TIMEOUT_SECONDS = 600
+CLEANUP_INTERVAL_SECONDS = 60
+WAITING_MAX_AGE_SECONDS = 600
+cleanup_task: Optional[asyncio.Task] = None
 ALLOWED_HASHES = {"imohash", "default"}
-
-
-class Transfer:
-    def __init__(self, transfer_id: str, filename: str, file_path: Path, hash_algo: str):
-        self.id = transfer_id
-        self.filename = filename
-        self.file_path = file_path
-        self.hash_algo = hash_algo
-        self.command = self._build_command()
-        self.status: str = "starting"
-        self.progress: int = 0
-        self.code: Optional[str] = None
-        self.last_output: str = ""
-        self.started_at = time.time()
-        self.queue = asyncio.Queue()
-        self.process: Optional[asyncio.subprocess.Process] = None
-        self.timeout_task: Optional[asyncio.Task] = None
-
-    def _build_command(self) -> list[str]:
-        return ["croc", "send", "--hash", self.hash_algo, str(self.file_path)]
+DOCKER_CLIENT = docker.from_env()
 
 def list_files(root: Path):
     if not root.exists() or not root.is_dir():
@@ -54,7 +54,6 @@ def list_files(root: Path):
         key=lambda item: (item["kind"] != "folder", item["name"].lower()),
     )
 
-
 def resolve_file(root: Path, name: str) -> Optional[Path]:
     candidate = (root / name).resolve()
     try:
@@ -65,119 +64,144 @@ def resolve_file(root: Path, name: str) -> Optional[Path]:
         return None
     return candidate
 
+PROGRESS_LINE_REGEX = re.compile(r"\b\d{1,3}%\s*\|")
+SPEED_REGEX = re.compile(r"\b\d+(?:\.\d+)?\s*[kmgtpe]i?b\s*/\s*s\b", re.IGNORECASE)
 
-def parse_progress(line: str) -> Optional[int]:
-    match = re.search(r"(\d{1,3})%", line)
-    if not match:
+
+def decode_log_lines(raw: bytes) -> list[str]:
+    text = raw.decode("utf-8", errors="replace")
+    parts = re.split(r"[\r\n]+", text)
+    return [part.strip() for part in parts if part.strip()]
+
+
+def parse_docker_time(value: Optional[str]) -> Optional[float]:
+    if not value:
         return None
-    value = int(match.group(1))
-    if value < 0 or value > 100:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
         return None
-    return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.timestamp()
 
 
-def parse_code(line: str) -> Optional[str]:
-    secret_match = re.search(r"CROC_SECRET=\"([a-z0-9-]+)\"", line, re.IGNORECASE)
-    if secret_match:
-        return secret_match.group(1)
-
-    code_match = re.search(r"Code:\s*([a-z0-9-]+)", line, re.IGNORECASE)
-    if code_match:
-        return code_match.group(1)
-
-    croc_match = re.search(r"\bcroc\s+([a-z0-9-]+)\b", line, re.IGNORECASE)
-    if croc_match:
-        token = croc_match.group(1)
-        if token.lower() != "send":
-            return token
-
+def parse_code(lines: list[str]) -> Optional[str]:
+    for line in lines:
+        match = re.search(r"CROC_SECRET=\"([a-z0-9-]+)\"", line, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        match = re.search(r"Code\s+is:\s*([a-z0-9-]+)", line, re.IGNORECASE)
+        if match:
+            return match.group(1)
     return None
 
 
-def parse_status(line: str) -> Optional[str]:
-    lower = line.lower()
-    if lower.startswith("sending "):
-        return "preparing"
-    if "on the other computer run" in lower:
-        return "waiting"
-    if "waiting" in lower and "receiver" in lower:
-        return "waiting"
+def find_last_progress_line(lines: list[str]) -> Optional[str]:
+    for line in reversed(lines):
+        if PROGRESS_LINE_REGEX.search(line):
+            return line
     return None
 
 
-async def send_event(transfer: Transfer, event: dict):
-    payload = json.dumps(event)
-    await transfer.queue.put(payload)
+def parse_progress_details(line: str) -> dict:
+    percent = None
+    filename = None
+    percent_match = re.search(r"(\d{1,3})%\s*\|", line)
+    if percent_match:
+        percent = int(percent_match.group(1))
+
+    filename_match = re.search(r"^(.*?)\s+\d{1,3}%\s*\|", line)
+    if filename_match:
+        filename = filename_match.group(1).strip()
+
+    speed = None
+    speed_match = SPEED_REGEX.search(line)
+    if speed_match:
+        speed = speed_match.group(0).replace(" ", "")
+
+    eta = None
+    bracket_match = re.search(r"\[([^\]]+)\]", line)
+    if bracket_match:
+        content = bracket_match.group(1).strip()
+        if content:
+            parts = [part.strip() for part in content.split(":") if part.strip()]
+            if parts:
+                eta = parts[-1]
+
+    return {"percent": percent, "speed": speed, "eta": eta, "filename": filename}
+
+def handle_container(container: Container):
+    status: str = "preparing"
+    code: str = ""
+
+    try:
+        container.reload()
+    except DockerException:
+        pass
+
+    created_at = None
+    started_at = None
+    if container.attrs:
+        created_at = container.attrs.get("Created")
+        started_at = container.attrs.get("State", {}).get("StartedAt")
+
+    logs = decode_log_lines(container.logs(tail=200))
+    last_progress = find_last_progress_line(logs)
+    details = parse_progress_details(last_progress) if last_progress else {}
+    code = parse_code(logs) or ""
+
+    if details.get("percent") is not None:
+        status = "transferring"
+    elif code:
+        status = "waiting"
+
+    created_timestamp = parse_docker_time(created_at)
+    waiting_minutes_ago = None
+    if status == "waiting" and created_timestamp is not None:
+        waiting_minutes_ago = int((time.time() - created_timestamp) / 60)
+
+    return {
+        "status": status,
+        "code": code,
+        "progress": details.get("percent") or 0,
+        "speed": details.get("speed"),
+        "eta": details.get("eta"),
+        "filename": details.get("filename"),
+        "last_progress": last_progress or "",
+        "created_at": created_at,
+        "started_at": started_at,
+        "waiting_minutes_ago": waiting_minutes_ago,
+        "created_timestamp": created_timestamp,
+    }
 
 
-async def watch_timeout(transfer: Transfer):
-    await asyncio.sleep(TRANSFER_TIMEOUT_SECONDS)
-    if transfer.process and transfer.process.returncode is None:
-        transfer.status = "timeout"
-        transfer.process.terminate()
-        await send_event(
-            transfer,
-            {
-                "type": "timeout",
-                "status": transfer.status,
-                "message": "Transfer timed out.",
-            },
-        )
-
-
-async def read_process_output(transfer: Transfer):
-    if not transfer.process:
-        return
-
-    stdout = transfer.process.stdout
-    if not stdout:
-        return
-
-    async for raw_line in stdout:
-        chunk = raw_line.decode(errors="replace")
-        for line in chunk.replace("\r", "\n").split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            transfer.last_output = line
-
-            status = parse_status(line)
-            if status:
-                transfer.status = status
-
-            code = parse_code(line)
-            if code:
-                transfer.code = code
-                transfer.status = "waiting"
-
-            progress = parse_progress(line)
-            if progress is not None:
-                transfer.progress = progress
-                transfer.status = "transferring"
-
-            await send_event(
-                transfer,
-                {
-                    "type": "output",
-                    "line": line,
-                    "status": transfer.status,
-                    "progress": transfer.progress,
-                    "code": transfer.code,
-                },
+async def cleanup_waiting_containers():
+    while True:
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
+        try:
+            containers: List[Container] = await asyncio.to_thread(
+                DOCKER_CLIENT.containers.list,
+                filters={"label": "crocle"},
             )
+        except DockerException:
+            continue
 
-    await transfer.process.wait()
-    if transfer.status != "timeout":
-        transfer.status = "done" if transfer.process.returncode == 0 else "failed"
+        now = time.time()
+        for container in containers:
+            info = handle_container(container)
+            if info.get("status") != "waiting":
+                continue
+            created_timestamp = info.get("created_timestamp")
+            if created_timestamp is None:
+                continue
+            if now - created_timestamp < WAITING_MAX_AGE_SECONDS:
+                continue
+            try:
+                await asyncio.to_thread(container.remove, force=True)
+            except DockerException:
+                continue
 
-    await send_event(
-        transfer,
-        {
-            "type": "complete",
-            "status": transfer.status,
-            "exit_code": transfer.process.returncode,
-        },
-    )
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -192,8 +216,7 @@ async def get_files(request: Request):
         context={"files": files, "file_root": str(FILE_ROOT)}
     )
 
-
-@app.post("/transfer/start", response_class=JSONResponse)
+@app.post("/transfer", response_class=JSONResponse)
 async def start_transfer(request: Request):
     form = await request.form()
     name = form.get("filename", "")
@@ -209,55 +232,37 @@ async def start_transfer(request: Request):
     if not file_path:
         return JSONResponse({"error": "Invalid file selection."}, status_code=400)
 
-    transfer_id = f"tx-{int(time.time() * 1000)}"
-    transfer = Transfer(transfer_id, name, file_path, hash_algo)
-    TRANSFERS[transfer_id] = transfer
-
+    container_file = f"/files/{file_path.name}"
     try:
-        transfer.process = await asyncio.create_subprocess_exec(
-            *transfer.command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        container = DOCKER_CLIENT.containers.run(
+            DOCKER_IMAGE,
+            command=["send", "--hash", hash_algo, container_file],
+            detach=True,
+            stdout=True,
+            stderr=True,
+            remove=True,
+            tty=True,
+            stdin_open=True,
+            mem_limit="50m",
+            labels=["crocle"],
+            environment={"HOME": "/tmp", "XDG_CONFIG_HOME": "/tmp/.config"},
+            volumes={str(FILE_ROOT.resolve()): {"bind": "/files", "mode": "ro"}},
         )
-    except FileNotFoundError:
+    except DockerException:
         return JSONResponse(
-            {"error": "croc is not installed or not in PATH."},
+            {"error": "Docker is not available or image failed to start."},
             status_code=500,
         )
 
-    transfer.timeout_task = asyncio.create_task(watch_timeout(transfer))
-    asyncio.create_task(read_process_output(transfer))
+    return JSONResponse({ "hello": "123" })
 
-    await send_event(
-        transfer,
-        {
-            "type": "start",
-            "status": transfer.status,
-            "command": " ".join(transfer.command),
-        },
-    )
+@app.get("/transfers", response_class=JSONResponse)
+async def current_transfers(request: Request):
 
-    return JSONResponse(
-        {
-            "id": transfer.id,
-            "status": transfer.status,
-            "command": " ".join(transfer.command),
-        }
-    )
+    containers: List[Container] = DOCKER_CLIENT.containers.list(filters={"label": "crocle"})
 
-
-@app.get("/transfer/{transfer_id}/stream")
-async def stream_transfer(transfer_id: str):
-    transfer = TRANSFERS.get(transfer_id)
-    if not transfer:
-        return JSONResponse({"error": "Transfer not found."}, status_code=404)
-
-    async def event_stream():
-        while True:
-            payload = await transfer.queue.get()
-            yield f"data: {payload}\n\n"
-            event = json.loads(payload)
-            if event.get("type") in {"complete", "timeout"}:
-                break
-
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return templates.TemplateResponse(
+          request=request,
+          name="transfers.html",
+          context={ "transfers": [handle_container(container) for container in containers] }
+      )

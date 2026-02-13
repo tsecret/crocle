@@ -4,12 +4,12 @@
       No files found in <span class="font-semibold">{{ file_root }}</span>.
     </div>
   {% else %}
-    <ul class="divide-y divide-base-200">
+    <ul class="h-full">
       {% for file in files %}
         <li>
           <button
             type="button"
-            class="flex w-full items-center gap-4 rounded-none border border-transparent px-4 py-3 text-left transition hover:bg-base-200"
+            class="flex w-full items-center px-4 py-2 transition hover:bg-base-200 text-left gap-4"
             data-file-row
             data-file-name="{{ file.name }}"
           >
