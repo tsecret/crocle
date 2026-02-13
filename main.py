@@ -221,6 +221,7 @@ def handle_container(container: Container):
         label_filename = container.labels.get("crocle.filename")
 
     return {
+        "container_id": container.id,
         "status": status,
         "code": code,
         "progress": details.get("percent") or 0,
@@ -315,7 +316,8 @@ async def start_transfer(request: Request):
     if not file_path or not (file_path.is_file() or file_path.is_dir()):
         return JSONResponse({"error": "Invalid file selection."}, status_code=400)
 
-    container_file = f"/files/{file_path.name}"
+    relative_path = file_path.resolve().relative_to(FILE_ROOT.resolve()).as_posix()
+    container_file = f"/files/{relative_path}"
     try:
         container = DOCKER_CLIENT.containers.run(
             DOCKER_IMAGE,
@@ -327,7 +329,7 @@ async def start_transfer(request: Request):
             tty=True,
             stdin_open=True,
             mem_limit="100m",
-            labels={"crocle": "true", "crocle.filename": name},
+            labels={"crocle": "true", "crocle.filename": relative_path},
             environment={"HOME": "/tmp", "XDG_CONFIG_HOME": "/tmp/.config"},
             volumes={resolve_host_files_path(): {"bind": "/files", "mode": "ro"}},
         )
@@ -345,6 +347,19 @@ async def start_transfer(request: Request):
         )
 
     return JSONResponse({ "hello": "123" })
+
+
+@app.delete("/transfer/{container_id}", response_class=JSONResponse)
+async def stop_transfer(container_id: str):
+    try:
+        container = DOCKER_CLIENT.containers.get(container_id)
+        await asyncio.to_thread(container.remove, force=True)
+    except DockerException as exc:
+        return JSONResponse(
+            {"error": "Unable to stop container.", "detail": str(exc)},
+            status_code=500,
+        )
+    return JSONResponse({"status": "stopped"})
 
 @app.get("/transfers", response_class=JSONResponse)
 async def current_transfers(request: Request):

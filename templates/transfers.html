@@ -10,7 +10,20 @@
           <p class="text-sm font-semibold text-base-content">
             {{ transfer.filename or transfer.label_filename or "Transfer" }}
           </p>
-          <span class="badge badge-outline">{{ transfer.status }}</span>
+          <div class="flex items-center gap-2">
+            <span class="badge badge-outline">{{ transfer.status }}</span>
+            {% if transfer.container_id %}
+              <button
+                class="btn btn-ghost btn-sm"
+                title="Stop transfer"
+                hx-delete="/transfer/{{ transfer.container_id }}"
+                hx-trigger="click"
+                hx-swap="none"
+              >
+                <i data-lucide="circle-stop" class="h-4 w-4"></i>
+              </button>
+            {% endif %}
+          </div>
         </div>
 
         {% if transfer.status == "waiting" %}
