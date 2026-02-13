@@ -6,6 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Crocle</title>
+    <link rel="icon" type="image/png" href="/assets/crocle.png" />
     <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
@@ -16,7 +17,27 @@
   <body class="min-h-screen">
     <main class="mx-auto">
       <header class="w-full h-32 p-8">
-        <p class="font-bold text-2xl">Crocle</p>
+        <div class="flex items-center justify-between gap-6">
+          <div class="flex items-center gap-4">
+            <img
+              src="/assets/crocle.png"
+              alt="Crocle"
+              class="h-12 w-12 rounded-xl object-cover"
+            />
+            <p class="font-bold text-2xl">Crocle</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <a class="btn btn-ghost btn-sm" href="/acknowledgements">Acknowledgements</a>
+            <a
+              class="btn btn-outline btn-sm"
+              href="https://github.com/tsecret/crocle"
+              target="_blank"
+              rel="noreferrer"
+            >
+              GitHub
+            </a>
+          </div>
+        </div>
       </header>
 
     <section class="grid gap-8 lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)] px-8">

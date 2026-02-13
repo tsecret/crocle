@@ -13,6 +13,7 @@ import docker
 from docker.errors import DockerException
 from docker.models.containers import Container
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
@@ -29,6 +30,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 templates = Jinja2Templates(directory="templates")
 FILE_ROOT = Path("files")
 DOCKER_IMAGE = os.getenv("CROCLE_IMAGE", "schollz/croc")
@@ -188,8 +190,15 @@ def handle_container(container: Container):
 
     created_timestamp = parse_docker_time(created_at)
     waiting_minutes_ago = None
+    waiting_minutes_remaining = None
     if status == "waiting" and created_timestamp is not None:
-        waiting_minutes_ago = int((time.time() - created_timestamp) / 60)
+        elapsed_seconds = time.time() - created_timestamp
+        waiting_minutes_ago = int(elapsed_seconds / 60)
+        waiting_minutes_remaining = max(0, int((WAITING_MAX_AGE_SECONDS - elapsed_seconds) / 60))
+
+    label_filename = None
+    if container.labels:
+        label_filename = container.labels.get("crocle.filename")
 
     return {
         "status": status,
@@ -202,7 +211,9 @@ def handle_container(container: Container):
         "created_at": created_at,
         "started_at": started_at,
         "waiting_minutes_ago": waiting_minutes_ago,
+        "waiting_minutes_remaining": waiting_minutes_remaining,
         "created_timestamp": created_timestamp,
+        "label_filename": label_filename,
     }
 
 
@@ -246,6 +257,11 @@ async def get_files(request: Request):
         context={"files": files, "file_root": str(FILE_ROOT)}
     )
 
+
+@app.get("/acknowledgements", response_class=HTMLResponse)
+async def acknowledgements(request: Request):
+    return templates.TemplateResponse(request=request, name="acknowledgements.html")
+
 @app.post("/transfer", response_class=JSONResponse)
 async def start_transfer(request: Request):
     form = await request.form()
@@ -274,7 +290,7 @@ async def start_transfer(request: Request):
             tty=True,
             stdin_open=True,
             mem_limit="50m",
-            labels=["crocle"],
+            labels={"crocle": "true", "crocle.filename": file_path.name},
             environment={"HOME": "/tmp", "XDG_CONFIG_HOME": "/tmp/.config"},
             volumes={resolve_host_files_path(): {"bind": "/files", "mode": "ro"}},
         )
