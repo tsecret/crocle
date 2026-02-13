@@ -3,9 +3,12 @@ import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional, List
 import re
+import sys
+import traceback
 import docker
 from docker.errors import DockerException
 from docker.models.containers import Container
@@ -72,6 +75,33 @@ def decode_log_lines(raw: bytes) -> list[str]:
     text = raw.decode("utf-8", errors="replace")
     parts = re.split(r"[\r\n]+", text)
     return [part.strip() for part in parts if part.strip()]
+
+
+@lru_cache(maxsize=1)
+def resolve_host_files_path() -> str:
+    container_id = os.environ.get("HOSTNAME")
+    if container_id:
+        try:
+            current = DOCKER_CLIENT.containers.get(container_id)
+            target_paths = {
+                str(FILE_ROOT.resolve()),
+                "/app/files",
+                "/files",
+            }
+            for mount in current.attrs.get("Mounts", []):
+                destination = mount.get("Destination")
+                if destination in target_paths:
+                    source = mount.get("Source")
+                    if source:
+                        return source
+        except DockerException:
+            pass
+    if Path("/.dockerenv").exists():
+        raise RuntimeError(
+            "FILES volume not mounted. Bind your host files folder to /app/files, e.g. "
+            "- /Users/you/crocle/files:/app/files:ro"
+        )
+    return str(FILE_ROOT.resolve())
 
 
 def parse_docker_time(value: Optional[str]) -> Optional[float]:
@@ -246,11 +276,18 @@ async def start_transfer(request: Request):
             mem_limit="50m",
             labels=["crocle"],
             environment={"HOME": "/tmp", "XDG_CONFIG_HOME": "/tmp/.config"},
-            volumes={str(FILE_ROOT.resolve()): {"bind": "/files", "mode": "ro"}},
+            volumes={resolve_host_files_path(): {"bind": "/files", "mode": "ro"}},
         )
-    except DockerException:
+    except RuntimeError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    except DockerException as exc:
+        print("Docker error while starting transfer:", file=sys.stderr)
+        traceback.print_exc()
         return JSONResponse(
-            {"error": "Docker is not available or image failed to start."},
+            {
+                "error": "Docker is not available or image failed to start.",
+                "detail": str(exc),
+            },
             status_code=500,
         )
 
