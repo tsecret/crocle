@@ -89,6 +89,7 @@ def resolve_entry(root: Path, name: str) -> Optional[Path]:
         return None
     return candidate
 
+
 PROGRESS_LINE_REGEX = re.compile(r"\b\d{1,3}%\s*\|")
 SPEED_REGEX = re.compile(r"\b\d+(?:\.\d+)?\s*[kmgtpe]i?b\s*/\s*s\b", re.IGNORECASE)
 
