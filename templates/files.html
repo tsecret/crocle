@@ -1,9 +1,25 @@
-<div class="rounded-2xl border border-base-300 bg-base-100">
-  <div class="border-b border-base-200 px-4 py-3 text-xs text-base-content/60">
+<div class="flex h-full flex-col">
+  <div class="flex items-center justify-between border-b border-slate-200 bg-slate-50/60 px-5 py-3 dark:border-card-border dark:bg-white/[0.02]">
     <div class="flex flex-wrap items-center gap-2">
+      {% if current_path %}
+        {% set path_parts = current_path.split('/') %}
+        {% set parent_path = '/'.join(path_parts[:-1]) %}
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 rounded border border-slate-300 px-2 py-0.5 text-[10px] uppercase tracking-wider text-slate-500 transition hover:bg-slate-100 hover:text-slate-700 dark:border-card-border dark:hover:bg-card-border dark:hover:text-slate-300"
+          hx-get="{% if parent_path %}/files?path={{ parent_path|urlencode }}{% else %}/files{% endif %}"
+          hx-target="#files"
+          hx-swap="innerHTML"
+          title="Go back"
+        >
+          <span class="material-symbols-outlined text-sm">arrow_back</span>
+          Back
+        </button>
+      {% endif %}
+      <span class="material-symbols-outlined text-sm text-slate-400">folder_open</span>
       <button
         type="button"
-        class="link link-hover text-xs"
+        class="text-xs font-mono text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300"
         hx-get="/files"
         hx-target="#files"
         hx-swap="innerHTML"
@@ -14,7 +30,7 @@
         <span>/</span>
         <button
           type="button"
-          class="link link-hover text-xs"
+          class="text-xs font-mono text-slate-400 transition hover:text-slate-700 dark:text-slate-500 dark:hover:text-slate-300"
           hx-get="/files?path={{ crumb.path }}"
           hx-target="#files"
           hx-swap="innerHTML"
@@ -22,51 +38,55 @@
           {{ crumb.name }}
         </button>
       {% endfor %}
+      {% if not current_path %}
+        <span class="text-xs font-medium text-primary">.</span>
+      {% endif %}
     </div>
+    <div class="text-[10px] font-bold uppercase tracking-wider text-slate-500">{{ files|length }} Items</div>
   </div>
 
   {% if not files %}
-    <div class="p-6 text-sm text-base-content/70">
+    <div class="flex flex-1 items-center justify-center p-6 text-sm text-slate-500">
       No files found in <span class="font-semibold">{{ file_root }}</span>.
     </div>
   {% else %}
-    <ul>
+    <ul class="flex-1 overflow-y-auto divide-y divide-slate-100 dark:divide-card-border">
       {% for file in files %}
         <li>
           {% if file.kind == "folder" %}
             <button
               type="button"
-              class="flex w-full items-center px-4 py-2 transition hover:bg-base-200 text-left gap-4 cursor-pointer"
+              class="file-item flex w-full cursor-pointer items-center gap-3 px-5 py-2.5 text-left transition-colors"
               data-folder-row
               data-folder-path="{{ file.path }}"
             >
-              <span class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-base-200 text-primary">
-                <i data-lucide="{{ file.icon }}" class="h-5 w-5"></i>
-              </span>
+              <span class="material-symbols-outlined text-xl text-primary">folder</span>
               <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-base-content break-words">{{ file.name }}</p>
-                <p class="text-xs text-base-content/60">Folder</p>
+                <p class="truncate text-sm font-medium">{{ file.name }}</p>
               </div>
+              <div class="text-[10px] font-mono uppercase text-slate-500">Folder</div>
             </button>
           {% else %}
             <button
               type="button"
-              class="flex w-full items-center px-4 py-2 transition hover:bg-base-200 text-left gap-4 cursor-pointer"
+              class="file-item flex w-full cursor-pointer items-center gap-3 px-5 py-2.5 text-left transition-colors"
               data-file-row
               data-file-name="{{ file.name }}"
               data-file-path="{{ file.path }}"
             >
-              <span class="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-base-200 text-primary">
-                <i data-lucide="{{ file.icon }}" class="h-5 w-5"></i>
-              </span>
+              <span class="material-symbols-outlined text-xl text-primary">description</span>
               <div class="flex-1 min-w-0">
-                <p class="text-sm font-semibold text-base-content break-words">{{ file.name }}</p>
-                <p class="text-xs text-base-content/60">File</p>
+                <p class="truncate text-sm font-medium">{{ file.name }}</p>
               </div>
+              <div class="text-[10px] font-mono uppercase text-slate-500">File</div>
             </button>
           {% endif %}
         </li>
       {% endfor %}
     </ul>
   {% endif %}
+
+  <div class="border-t border-slate-200 bg-slate-50/60 px-5 py-3 text-[10px] text-slate-500 dark:border-card-border dark:bg-white/[0.01]">
+    <span>Click a file to select</span>
+  </div>
 </div>
