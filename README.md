@@ -1,18 +1,20 @@
-![Crocle Logo](assets/crocle.png)
-
-# Crocle
-
-Crocle is web UI for croc. It runs as a Docker container, serves files and creates sub containers for file transfer.
-
-## Development
-
-1. Create a virtual environment.
-2. Install dependencies.
-3. Ensure Docker is running.
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-fastapi dev main.py
+To install dependencies:
+```sh
+bun install
 ```
+
+To develop (API on :3000, Vite on :5173):
+```sh
+bun run dev
+```
+
+open http://localhost:5173
+
+To run the production build:
+```sh
+bun run start
+```
+
+open http://localhost:3000
+
+See [DOCS.md](DOCS.md) for architecture and API reference.

@@ -1,35 +1,32 @@
-FROM python:3.12-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-
+# ── Build ────────────────────────────────────────────────────────────────────
+FROM oven/bun:1-debian AS build
 WORKDIR /app
 
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
+COPY index.html vite.config.ts tsconfig.json ./
+COPY public/ public/
+COPY src/ src/
 
-ARG CROC_VERSION=10.0.4
-RUN set -eux; \
-  arch="$(uname -m)"; \
-  case "$arch" in \
-    x86_64) croc_arch="64bit" ;; \
-    aarch64|arm64) croc_arch="ARM64" ;; \
-    *) echo "Unsupported architecture: $arch"; exit 1 ;; \
-  esac; \
-  curl -fsSL -o /tmp/croc.tar.gz \
-    "https://github.com/schollz/croc/releases/download/v${CROC_VERSION}/croc_v${CROC_VERSION}_Linux-${croc_arch}.tar.gz"; \
-  tar -xzf /tmp/croc.tar.gz -C /usr/local/bin croc; \
-  rm -f /tmp/croc.tar.gz; \
-  croc --version
+RUN bun run build
 
-COPY main.py /app/main.py
-COPY templates /app/templates
-COPY assets /app/assets
+# ── Runtime ──────────────────────────────────────────────────────────────────
+# The server is bundled (plus two native .node assets from ssh2, a dockerode
+# transitive dependency), so the runtime image carries no node_modules at all.
+FROM oven/bun:1-alpine
+WORKDIR /app
 
-EXPOSE 8000
+RUN addgroup -S -g 1000 crocle \
+ && adduser -S -u 1000 -G crocle -H crocle
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+COPY --from=build --chown=crocle:crocle /app/dist dist
+
+ENV PORT=3000
+EXPOSE 3000
+USER crocle
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD bun -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["bun", "dist/server.js"]

@@ -1,0 +1,19 @@
+export interface FileEntry {
+  name: string
+  kind: 'folder' | 'file'
+  path: string
+}
+
+export interface FileListing {
+  path: string
+  files: FileEntry[]
+}
+
+export interface ZipJob {
+  container_id: string
+  filename: string
+  status: 'compressing' | 'done' | 'failed'
+  progress: number
+  current_file?: string
+  exit_code?: number
+}
