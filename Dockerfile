@@ -17,14 +17,12 @@ RUN bun run build
 FROM oven/bun:1-alpine
 WORKDIR /app
 
-RUN addgroup -S -g 1000 crocle \
- && adduser -S -u 1000 -G crocle -H crocle
-
-COPY --from=build --chown=crocle:crocle /app/dist dist
+# oven/bun:1-alpine already ships a non-root user (node, uid/gid 1000)
+COPY --from=build --chown=node:node /app/dist dist
 
 ENV PORT=3000
 EXPOSE 3000
-USER crocle
+USER node
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD bun -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
