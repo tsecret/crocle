@@ -17,12 +17,12 @@ RUN bun run build
 FROM oven/bun:1-alpine
 WORKDIR /app
 
-# oven/bun:1-alpine already ships a non-root user (node, uid/gid 1000)
-COPY --from=build --chown=node:node /app/dist dist
+# oven/bun image ships a non-root `bun` user (uid/gid 1000)
+COPY --from=build --chown=bun:bun /app/dist dist
 
 ENV PORT=3000
 EXPOSE 3000
-USER node
+USER bun
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
   CMD bun -e "fetch('http://localhost:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
