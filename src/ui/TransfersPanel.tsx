@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Check, CircleStop, Copy, Inbox } from 'lucide-react'
+import { Check, CircleStop, Copy, ExternalLink, Inbox } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -69,14 +69,27 @@ export default function TransfersPanel({ jobs, onStop }: Props) {
                     </div>
                   </div>
                   {job.code ? (
-                    <div className="mt-3 flex items-center gap-2">
-                      <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs">
-                        {job.code}
-                      </code>
-                      <Button variant="outline" size="icon-sm" title="Copy code" onClick={() => copy(job)}>
-                        {copiedId === job.container_id ? <Check /> : <Copy />}
-                      </Button>
-                    </div>
+                    <>
+                      <div className="mt-3 flex items-center gap-2">
+                        <code className="min-w-0 flex-1 truncate rounded-md bg-muted px-2 py-1.5 font-mono text-xs">
+                          {job.code}
+                        </code>
+                        <Button variant="outline" size="icon-sm" title="Copy code" onClick={() => copy(job)}>
+                          {copiedId === job.container_id ? <Check /> : <Copy />}
+                        </Button>
+                      </div>
+                      {job.url && (
+                        <a
+                          href={job.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-2 inline-flex items-center gap-1.5 text-xs text-primary underline-offset-2 hover:underline"
+                        >
+                          <ExternalLink className="size-3.5" />
+                          {job.url}
+                        </a>
+                      )}
+                    </>
                   ) : (
                     job.status === 'waiting' && (
                       <p className="mt-3 text-xs text-muted-foreground">Waiting for croc code...</p>

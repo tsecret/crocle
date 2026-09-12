@@ -23,5 +23,6 @@ export interface TransferJob {
   filename: string
   status: 'waiting' | 'done' | 'failed'
   code?: string
+  url?: string
   exit_code?: number
 }

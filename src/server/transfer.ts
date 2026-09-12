@@ -12,6 +12,7 @@ export interface TransferJob {
   filename: string
   status: 'waiting' | 'done' | 'failed'
   code?: string
+  url?: string
   exit_code?: number
 }
 
@@ -67,8 +68,13 @@ export async function startTransfers(docker: Docker, relPath: string, copies: nu
   return jobs
 }
 
+// Different croc versions phrase it differently; the getcroc URL is the most stable form
 export function parseCrocCode(logs: string) {
-  return /your croc code is: (\S+)/.exec(logs)?.[1]
+  return (
+    /getcroc\.com\/\?code=([a-z0-9-]+)/.exec(logs)?.[1] ??
+    /your croc code is: (\S+)/.exec(logs)?.[1] ??
+    /\bcroc ([a-z0-9-]+)\b/.exec(logs)?.[1]
+  )
 }
 
 export async function getTransferJob(docker: Docker, id: string): Promise<TransferJob> {
@@ -83,11 +89,13 @@ export async function getTransferJob(docker: Docker, id: string): Promise<Transf
   // The code line ends with a newline, so it is in the logs as soon as croc prints it
   const raw = (await docker.getContainer(id).logs({ stdout: true, stderr: true })).toString()
   const done = !info.State.Running && info.State.ExitCode === 0
+  const code = parseCrocCode(raw)
   return {
     container_id: info.Id,
     filename: info.Config.Labels['crocle.filename'] ?? '',
     status: info.State.Running ? 'waiting' : done ? 'done' : 'failed',
-    code: parseCrocCode(raw),
+    code,
+    url: code ? `https://getcroc.com/?code=${code}` : undefined,
     exit_code: info.State.Running ? undefined : info.State.ExitCode,
   }
 }
