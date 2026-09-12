@@ -26,7 +26,7 @@ export class ZipError extends Error {
   }
 }
 
-const toHost = (p: string) => path.join(HOST_FILES_DIR, path.relative(FILES_DIR, p))
+export const toHost = (p: string) => path.join(HOST_FILES_DIR, path.relative(FILES_DIR, p))
 const partialName = (zipName: string) => `.${zipName}.partial`
 
 function resolveFolder(relPath: string) {
@@ -40,11 +40,11 @@ function resolveFolder(relPath: string) {
   return folder
 }
 
-async function ensureImage(docker: Docker) {
+export async function ensureImage(docker: Docker, image: string = ZIP_IMAGE) {
   try {
-    await docker.getImage(ZIP_IMAGE).inspect()
+    await docker.getImage(image).inspect()
   } catch {
-    const stream = await docker.pull(ZIP_IMAGE)
+    const stream = await docker.pull(image)
     await new Promise((resolve, reject) =>
       docker.modem.followProgress(stream, (err) => (err ? reject(err) : resolve(null)))
     )

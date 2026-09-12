@@ -17,3 +17,11 @@ export interface ZipJob {
   current_file?: string
   exit_code?: number
 }
+
+export interface TransferJob {
+  container_id: string
+  filename: string
+  status: 'waiting' | 'done' | 'failed'
+  code?: string
+  exit_code?: number
+}

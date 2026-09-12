@@ -1,8 +1,9 @@
 # Crocle — Documentation
 
 Crocle is a service that zips up folders on demand by orchestrating throwaway
-`crazymax/7zip` Docker containers, and reports live progress over a JSON API.
-A small React UI ships with it.
+`crazymax/7zip` Docker containers, and sends files or folders to any number of
+recipients via throwaway `schollz/croc` containers. Both report live status over
+a JSON API. A small React UI ships with it.
 
 Stack: **Bun + Hono (API) + Vite + React (UI)**, all in one package.
 
@@ -20,7 +21,8 @@ crocle/
 │   │   ├── index.ts      # bootstrap: docker client, sweep timer, Bun.serve
 │   │   ├── app.ts        # createApp: /api routes + static UI serving
 │   │   ├── files.ts      # file listing for the UI (traversal-safe)
-│   │   └── zip.ts        # ZipJob lifecycle: create, track, settle, stop, sweep
+│   │   ├── zip.ts        # ZipJob lifecycle: create, track, settle, stop, sweep
+│   │   └── transfer.ts   # TransferJob lifecycle: croc send containers, stop, sweep
 │   ├── components/ui/    # shadcn/ui components
 │   ├── lib/utils.ts      # shadcn cn()
 │   └── ui/               # React app
@@ -80,7 +82,7 @@ Two stages, mirroring the build:
    non-root user, `HEALTHCHECK` on `/api/health`, `CMD bun dist/server.js`
 
 The container needs `/var/run/docker.sock` mounted (Docker-in-Docker) to
-spawn 7za containers.
+spawn 7za and croc containers.
 
 ---
 
@@ -141,7 +143,33 @@ zip unless the job had already finished successfully.
   crocle was down)
 - removes finished containers older than 10 min (`FINISHED_TTL_MS`)
 
-### 6. Web UI
+### 6. Send via croc
+
+`POST /api/transfer` with body `{"path": "<relative to FILES_DIR>", "copies": 1}`.
+
+Flow:
+
+1. Path is resolved against `FILES_DIR`; anything escaping it is rejected (400).
+2. Missing file/folder → 404. `copies` must be an integer between 1 and 10.
+3. The croc image is pulled on first use, then **one container per copy** is
+   created and started:
+   - `croc send /data/<name>` (trailing `/` for folders, which croc ships as a zip)
+   - target bound `:ro` at `/data/<name>`, 500 MB memory limit
+   - TTY so logs stay free of Docker's stream headers
+   - labels: `crocle=true`, `crocle.job=transfer`, `crocle.filename`
+4. Returns `202` with the list of started jobs.
+
+Each container prints `your croc code is: <code>` once it is ready; the code is
+parsed from the container logs and exposed as `code` on the job. Status is
+`waiting` while the container runs, `done` when the recipient finished the
+download (exit 0), `failed` otherwise. `DELETE /api/transfer/:id` force-removes
+the container. The sweep removes finished transfer containers after 10 min.
+
+Note: croc coordinates through its public relay and then prefers a direct P2P
+connection to the container. If the host is behind NAT without port mapping,
+transfers fall back to the (slower) relayed path.
+
+### 7. Web UI
 
 React app (`src/ui/`), Tailwind CSS v4 + shadcn/ui, react-router. The dark
 theme (`#0f0f0f` background, `#1a1a1a` cards, `#2a2a2a` borders, `#22c55e`
@@ -150,9 +178,12 @@ CSS variables in `src/ui/globals.css`.
 
 - **Dashboard (`/`)**: file browser (`GET /api/files`; click to select,
   double-click a folder to open, breadcrumb + back), selection card with the
-  Zip Folder action (folders only), and a "Current jobs" panel with status
-  badge, progress bar, current file and stop button. Jobs poll
-  `GET /api/compress` every 5 s (15 s when the tab is hidden).
+  Send action (files and folders; opens a dialog asking how many copies to
+  create, one croc code per copy) and Zip Folder action (folders only), a
+  "Transfers" panel showing each transfer's croc code with a copy button and a
+  stop button, and a "Current jobs" panel with status badge, progress bar,
+  current file and stop button. Jobs and transfers poll their list endpoints
+  every 5 s (15 s when the tab is hidden).
 - **Acknowledgements (`/acknowledgements`)**: credits for the 7za container
   image and the logo artwork.
 
@@ -169,6 +200,10 @@ CSS variables in `src/ui/globals.css`.
 | GET    | `/api/compress`   | —                  | `ZipJob[]` (all, incl. finished) |
 | GET    | `/api/compress/:id`| —                 | `ZipJob` |
 | DELETE | `/api/compress/:id`| —                 | `{status: "stopped"}` |
+| POST   | `/api/transfer`   | `{path, copies}`   | `202` `TransferJob[]` (one per copy) |
+| GET    | `/api/transfer`   | —                  | `TransferJob[]` (all, incl. finished) |
+| GET    | `/api/transfer/:id`| —                 | `TransferJob` |
+| DELETE | `/api/transfer/:id`| —                 | `{status: "stopped"}` |
 
 ### `ZipJob`
 
@@ -179,6 +214,14 @@ interface ZipJob {
   status: 'compressing' | 'done' | 'failed'
   progress: number            // 0-100, forced to 100 when done
   current_file?: string       // file 7za is currently adding
+  exit_code?: number          // only when not running
+}
+
+interface TransferJob {
+  container_id: string
+  filename: string            // name of the sent file or folder
+  status: 'waiting' | 'done' | 'failed'
+  code?: string               // croc code, once printed
   exit_code?: number          // only when not running
 }
 ```
@@ -199,8 +242,8 @@ interface FileEntry {
 
 | Code | Meaning |
 |------|---------|
-| 400  | `path` missing, or path escapes `FILES_DIR` |
-| 404  | folder not found, or job id unknown / not a zip job |
+| 400  | `path` missing, path escapes `FILES_DIR`, or invalid `copies` (1-10) |
+| 404  | file/folder not found, or job id unknown / not the requested job type |
 | 409  | output zip already exists, or a job for it is already running |
 
 ---
@@ -250,5 +293,5 @@ Docker socket: `/var/run/docker.sock` (hardcoded).
 - **No tests.**
 - `liveProgress` is in-memory; after a crocle restart, in-flight jobs report
   progress from the next 7za redraw only (see Live progress).
-- The old croc-transfer feature set (file browser, HTMX UI, `schollz/croc`
-  containers) no longer exists in this codebase.
+- Croc codes are in-memory only in the sense that they live in the container
+  logs; stopping a transfer (`DELETE /api/transfer/:id`) revokes its code.

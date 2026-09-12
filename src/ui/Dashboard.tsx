@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { CheckCircle, FileArchive, Trash2 } from 'lucide-react'
+import { CheckCircle, FileArchive, Send, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -12,7 +12,8 @@ import {
 } from '@/components/ui/dialog'
 import FileBrowser, { type SelectedEntry } from './FileBrowser'
 import JobsPanel from './JobsPanel'
-import type { FileListing, ZipJob } from './types'
+import TransfersPanel from './TransfersPanel'
+import type { FileListing, TransferJob, ZipJob } from './types'
 
 async function apiError(res: Response): Promise<string> {
   const body = await res.json().catch(() => ({}))
@@ -23,9 +24,12 @@ export default function Dashboard() {
   const [listing, setListing] = useState<FileListing | null>(null)
   const [selected, setSelected] = useState<SelectedEntry | null>(null)
   const [jobs, setJobs] = useState<ZipJob[]>([])
-  const [status, setStatus] = useState('Select a folder to zip it.')
+  const [transfers, setTransfers] = useState<TransferJob[]>([])
+  const [status, setStatus] = useState('Select a file or folder to send it.')
   const [busy, setBusy] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<SelectedEntry | null>(null)
+  const [sendTarget, setSendTarget] = useState<SelectedEntry | null>(null)
+  const [copies, setCopies] = useState(1)
 
   const loadFiles = useCallback((path = '') => {
     fetch(`/api/files${path ? `?path=${encodeURIComponent(path)}` : ''}`)
@@ -41,28 +45,41 @@ export default function Dashboard() {
       .catch(() => {})
   }, [])
 
+  const loadTransfers = useCallback(() => {
+    fetch('/api/transfer')
+      .then((r) => (r.ok ? r.json() : []))
+      .then(setTransfers)
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     loadFiles()
     loadJobs()
     // 5s while the tab is focused, 15s when it is not
-    const t = setInterval(() => (document.hidden ? undefined : loadJobs()), 5000)
-    const slow = setInterval(() => document.hidden && loadJobs(), 15000)
+    const t = setInterval(() => {
+      if (document.hidden) return
+      loadJobs()
+      loadTransfers()
+    }, 5000)
+    const slow = setInterval(() => {
+      if (!document.hidden) return
+      loadJobs()
+      loadTransfers()
+    }, 15000)
     return () => {
       clearInterval(t)
       clearInterval(slow)
     }
-  }, [loadFiles, loadJobs])
+  }, [loadFiles, loadJobs, loadTransfers])
 
   function select(entry: SelectedEntry) {
     setSelected(entry)
-    setStatus(
-      entry.kind === 'folder' ? 'Folder selected, ready to zip.' : 'Files can not be zipped, select a folder.'
-    )
+    setStatus(entry.kind === 'folder' ? 'Folder selected.' : 'File selected.')
   }
 
   function navigate(path: string) {
     setSelected(null)
-    setStatus('Select a folder to zip it.')
+    setStatus('Select a file or folder to send it.')
     loadFiles(path)
   }
 
@@ -109,6 +126,33 @@ export default function Dashboard() {
     loadJobs()
   }
 
+  async function stopTransfer(id: string) {
+    await fetch(`/api/transfer/${id}`, { method: 'DELETE' })
+    loadTransfers()
+  }
+
+  async function send() {
+    if (!sendTarget) return
+    setBusy(true)
+    setStatus('Starting transfers...')
+    try {
+      const res = await fetch('/api/transfer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: sendTarget.path, copies }),
+      })
+      if (!res.ok) throw new Error(await apiError(res))
+      setSendTarget(null)
+      setCopies(1)
+      setStatus('Transfers started. Share the codes with your recipients.')
+      loadTransfers()
+    } catch (err) {
+      setStatus((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <main className="mx-auto max-w-[1500px] p-4 sm:p-6">
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
@@ -136,6 +180,15 @@ export default function Dashboard() {
               <div className="flex flex-col gap-2">
                 <Button
                   className="w-full py-3 text-sm font-bold shadow-lg shadow-primary/20"
+                  disabled={busy || !selected}
+                  onClick={() => selected && setSendTarget(selected)}
+                >
+                  <Send data-icon="inline-start" />
+                  Send
+                </Button>
+                <Button
+                  className="w-full"
+                  variant="outline"
                   disabled={busy || selected?.kind !== 'folder'}
                   onClick={zip}
                 >
@@ -155,6 +208,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
+          <TransfersPanel jobs={transfers} onStop={stopTransfer} />
           <JobsPanel jobs={jobs} onStop={stop} />
         </div>
       </div>
@@ -183,6 +237,38 @@ export default function Dashboard() {
             >
               <Trash2 data-icon="inline-start" />
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={sendTarget !== null} onOpenChange={(open) => !open && setSendTarget(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send {sendTarget?.name}</DialogTitle>
+            <DialogDescription>
+              Starts one croc transfer per copy. Each copy gets its own code — share a code with each
+              recipient.
+            </DialogDescription>
+          </DialogHeader>
+          <label className="flex flex-col gap-2 text-sm">
+            How many copies?
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={copies}
+              onChange={(e) => setCopies(Number(e.target.value))}
+              className="h-10 w-24 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+            />
+          </label>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendTarget(null)}>
+              Cancel
+            </Button>
+            <Button disabled={busy || copies < 1} onClick={send}>
+              <Send data-icon="inline-start" />
+              Send
             </Button>
           </DialogFooter>
         </DialogContent>
