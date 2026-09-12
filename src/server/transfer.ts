@@ -44,7 +44,7 @@ export async function startTransfers(docker: Docker, relPath: string, copies: nu
     const container = await docker.createContainer({
       Image: CROC_IMAGE,
       // Trailing slash makes croc treat a directory as a directory
-      Cmd: ['send', `/data/${base}${isDir ? '/' : ''}`],
+      Cmd: ['send', '--hash', 'imohash', `/data/${base}${isDir ? '/' : ''}`],
       // A TTY keeps logs free of Docker's stream headers
       Tty: true,
       // croc runs without a home dir; give it a writable config location
