@@ -102,7 +102,7 @@ Flow:
 5. The 7za image is pulled on first use, then a container is created:
    - `7za a -tzip -mx=1 -bsp1 /out/.name.zip.partial /data/.`
    - folder bound `:ro` at `/data`, output dir at `/out`
-   - 500 MB memory limit
+   - 500 MB memory limit, `AutoRemove`
    - TTY so 7za emits progress and Docker stream headers are suppressed
    - labels: `crocle=true`, `crocle.job=zip`, `crocle.filename`,
      `crocle.output`, `crocle.partial`
@@ -135,13 +135,12 @@ sweep) finalizes finished containers:
 `DELETE /api/compress/:id` force-removes the container and deletes the partial
 zip unless the job had already finished successfully.
 
-### 5. Cleanup sweep
+### 5. Container cleanup
 
-`sweepZipJobs()` runs at startup and every 60 s:
-
-- settles finished-but-unsettled containers (covers jobs that finished while
-  crocle was down)
-- removes finished containers older than 10 min (`FINISHED_TTL_MS`)
+Zip and transfer containers are created with Docker `AutoRemove`, so the
+daemon deletes them the moment they exit. A finished job therefore drops out
+of the job lists; the zip itself is already published by the `wait()` callback
+(finalized from the captured paths and exit code, since the container is gone).
 
 ### 6. Send via croc
 
@@ -159,11 +158,13 @@ Flow:
    - labels: `crocle=true`, `crocle.job=transfer`, `crocle.filename`
 4. Returns `202` with the list of started jobs.
 
-Each container prints `your croc code is: <code>` once it is ready; the code is
-parsed from the container logs and exposed as `code` on the job. Status is
-`waiting` while the container runs, `done` when the recipient finished the
-download (exit 0), `failed` otherwise. `DELETE /api/transfer/:id` force-removes
-the container. The sweep removes finished transfer containers after 10 min.
+Each container prints the code once it is ready (`your croc code is: <code>`,
+`croc <code>`, or the `https://getcroc.com/?code=<code>` line — all three
+forms are parsed); it is exposed as `code` (plus `url`) on the job. Status is
+`waiting` while the container runs; the container is created with `AutoRemove`,
+so it is deleted by Docker when the recipient finishes and the job drops out
+of the list. `DELETE /api/transfer/:id` force-removes a running container and
+revokes its code.
 
 Note: croc coordinates through its public relay and then prefers a direct P2P
 connection to the container. If the host is behind NAT without port mapping,
@@ -293,5 +294,7 @@ Docker socket: `/var/run/docker.sock` (hardcoded).
 - **No tests.**
 - `liveProgress` is in-memory; after a crocle restart, in-flight jobs report
   progress from the next 7za redraw only (see Live progress).
-- Croc codes are in-memory only in the sense that they live in the container
-  logs; stopping a transfer (`DELETE /api/transfer/:id`) revokes its code.
+- With `AutoRemove`, finished jobs vanish from the lists as soon as their
+  container exits: no `done`/`failed` state is shown, and a job that finishes
+  while crocle is down is lost (an orphaned `.zip.partial` is cleaned up when
+  the same folder is zipped again).
