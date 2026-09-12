@@ -4,7 +4,6 @@ import { rename, rm } from 'node:fs/promises'
 import path from 'node:path'
 
 const ZIP_IMAGE = 'crazymax/7zip'
-const FINISHED_TTL_MS = 10 * 60 * 1000
 
 // Where crocle sees the files vs. where the Docker host sees them.
 // They differ when crocle itself runs in a container with a bind mount.
@@ -84,11 +83,17 @@ export async function startZip(docker: Docker, relPath: string) {
     HostConfig: {
       Binds: [`${toHost(folder)}:/data:ro`, `${toHost(outDir)}:/out`],
       Memory: 500 * 1024 * 1024,
+      // The container is removed on exit, so the wait() callback must finalize
+      // from the captured paths and exit code, not from a later inspect
+      AutoRemove: true,
     },
   })
   await track(docker, container.id)
   await container.start()
-  container.wait().then(() => settle(docker, container.id)).catch(() => {})
+  container
+    .wait()
+    .then((res) => finalizeZip(partialPath, finalPath, res.StatusCode))
+    .catch(() => {})
 
   return { container_id: container.id, filename: zipName, status: 'compressing' as const }
 }
@@ -135,17 +140,22 @@ export function parseProgress(logs: string, progress = 0, currentFile?: string) 
   return { progress, currentFile }
 }
 
-// Once the container has exited: publish the zip on success, drop the partial on failure.
+// Once the zip has finished: publish it on success, drop the partial on failure.
 // Idempotent, so both the wait() callback and status reads can call it.
+async function finalizeZip(partial: string | undefined, output: string | undefined, exitCode: number) {
+  if (!partial || !existsSync(partial)) return
+  if (exitCode === 0 && output && !existsSync(output)) await rename(partial, output)
+  else await rm(partial, { force: true })
+}
+
 async function settle(docker: Docker, id: string) {
   const info = await docker.getContainer(id).inspect()
   if (info.State.Running) return info
-  const partial = info.Config.Labels['crocle.partial']
-  const output = info.Config.Labels['crocle.output']
-  if (partial && existsSync(partial)) {
-    if (info.State.ExitCode === 0 && output && !existsSync(output)) await rename(partial, output)
-    else await rm(partial, { force: true })
-  }
+  await finalizeZip(
+    info.Config.Labels['crocle.partial'],
+    info.Config.Labels['crocle.output'],
+    info.State.ExitCode
+  )
   return info
 }
 
@@ -193,15 +203,3 @@ export async function stopZip(docker: Docker, id: string) {
   if (job.status !== 'done' && partial) await rm(partial, { force: true })
 }
 
-// Settles jobs that finished while crocle was down, and removes
-// finished job containers once their status is no longer interesting.
-export async function sweepZipJobs(docker: Docker) {
-  const containers = await docker.listContainers({ all: true, filters: { label: ['crocle.job=zip'] } })
-  for (const c of containers) {
-    if (c.State === 'running') continue
-    const info = await settle(docker, c.Id)
-    if (Date.now() - Date.parse(info.State.FinishedAt) > FINISHED_TTL_MS) {
-      await docker.getContainer(c.Id).remove({ force: true })
-    }
-  }
-}

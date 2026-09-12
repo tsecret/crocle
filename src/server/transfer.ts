@@ -4,7 +4,6 @@ import path from 'node:path'
 import { ensureImage, FILES_DIR, toHost } from './zip'
 
 const CROC_IMAGE = 'schollz/croc'
-const FINISHED_TTL_MS = 10 * 60 * 1000
 export const MAX_COPIES = 10
 
 export interface TransferJob {
@@ -59,6 +58,8 @@ export async function startTransfers(docker: Docker, relPath: string, copies: nu
       HostConfig: {
         Binds: [`${toHost(target)}:/data/${base}:ro`],
         Memory: 500 * 1024 * 1024,
+        // Removed on exit: once the recipient finishes, the job is done
+        AutoRemove: true,
       },
     })
     container.wait().catch(() => {})
@@ -110,14 +111,3 @@ export async function stopTransfer(docker: Docker, id: string) {
   await docker.getContainer(job.container_id).remove({ force: true })
 }
 
-// Removes finished transfer containers once their status is no longer interesting.
-export async function sweepTransferJobs(docker: Docker) {
-  const containers = await docker.listContainers({ all: true, filters: { label: ['crocle.job=transfer'] } })
-  for (const c of containers) {
-    if (c.State === 'running') continue
-    const info = await docker.getContainer(c.Id).inspect()
-    if (Date.now() - Date.parse(info.State.FinishedAt) > FINISHED_TTL_MS) {
-      await docker.getContainer(c.Id).remove({ force: true })
-    }
-  }
-}
