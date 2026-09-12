@@ -2,6 +2,7 @@ export interface FileEntry {
   name: string
   kind: 'folder' | 'file'
   path: string
+  size?: number
 }
 
 export interface FileListing {

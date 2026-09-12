@@ -7,6 +7,7 @@ export interface FileEntry {
   name: string
   kind: 'folder' | 'file'
   path: string
+  size?: number
 }
 
 export interface FileListing {
@@ -32,11 +33,18 @@ export function listFiles(relPath: string): FileListing {
   if (!existsSync(dir) || !statSync(dir).isDirectory()) {
     throw new ZipError('folder not found', 404)
   }
-  const files = readdirSync(dir, { withFileTypes: true }).map((entry) => ({
-    name: entry.name,
-    kind: entry.isDirectory() ? ('folder' as const) : ('file' as const),
-    path: path.relative(FILES_DIR, path.join(dir, entry.name)),
-  }))
+  const files = readdirSync(dir, { withFileTypes: true }).map((entry) => {
+    const full = path.join(dir, entry.name)
+    const isDir = entry.isDirectory()
+    return {
+      name: entry.name,
+      kind: isDir ? ('folder' as const) : ('file' as const),
+      path: path.relative(FILES_DIR, full),
+      // Folders would need a full recursive walk, so only files get a size.
+      // A broken symlink has no size rather than failing the whole listing.
+      size: isDir ? undefined : statSync(full, { throwIfNoEntry: false })?.size,
+    }
+  })
   files.sort((a, b) =>
     a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'folder' ? -1 : 1
   )

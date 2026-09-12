@@ -243,6 +243,7 @@ interface FileEntry {
   name: string
   kind: 'folder' | 'file'
   path: string            // relative to FILES_DIR, "/"-separated
+  size?: number           // bytes, files only (folders are not summed)
 }
 ```
 

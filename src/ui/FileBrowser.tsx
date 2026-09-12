@@ -7,6 +7,17 @@ import type { FileListing } from './types'
 
 export type SelectedEntry = { name: string; kind: 'folder' | 'file'; path: string }
 
+// Decimal units, matching what croc prints
+function formatSize(bytes: number) {
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0
+  while (bytes >= 1000 && i < units.length - 1) {
+    bytes /= 1000
+    i++
+  }
+  return i === 0 ? `${bytes} B` : `${bytes.toFixed(1)} ${units[i]}`
+}
+
 interface Props {
   listing: FileListing | null
   selected: SelectedEntry | null
@@ -94,7 +105,7 @@ export default function FileBrowser({ listing, selected, onSelect, onNavigate }:
                   )}
                   <span className="min-w-0 flex-1 truncate text-sm font-medium">{file.name}</span>
                   <span className="font-mono text-[10px] uppercase text-muted-foreground">
-                    {file.kind}
+                    {file.kind === 'file' && file.size !== undefined ? formatSize(file.size) : file.kind}
                   </span>
                 </button>
               </li>
