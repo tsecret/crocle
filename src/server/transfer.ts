@@ -1,5 +1,6 @@
 import Docker from 'dockerode'
 import { existsSync, statSync } from 'node:fs'
+import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { ensureImage, FILES_DIR, toHost } from './zip'
 
@@ -41,19 +42,23 @@ export async function startTransfers(docker: Docker, relPath: string, copies: nu
 
   const jobs: TransferJob[] = []
   for (let i = 0; i < copies; i++) {
+    // croc takes the code via CROC_SECRET so it never shows in the process list
+    const code = `crocle-${randomBytes(4).toString('base64url')}`
     const container = await docker.createContainer({
       Image: CROC_IMAGE,
       // Trailing slash makes croc treat a directory as a directory
       Cmd: ['send', '--hash', 'imohash', `/data/${base}${isDir ? '/' : ''}`],
       // A TTY keeps logs free of Docker's stream headers
       Tty: true,
-      // croc runs without a home dir; give it a writable config location
-      // (otherwise it warns: "mkdir /.config: permission denied")
-      Env: ['CROC_HOME=/tmp/croc'],
+      Env: [
+        'CROC_HOME=/tmp/croc',
+        `CROC_SECRET=${code}`,
+      ],
       Labels: {
         crocle: 'true',
         'crocle.job': 'transfer',
         'crocle.filename': base,
+        'crocle.code': code,
       },
       HostConfig: {
         Binds: [`${toHost(target)}:/data/${base}:ro`],
@@ -64,18 +69,15 @@ export async function startTransfers(docker: Docker, relPath: string, copies: nu
     })
     container.wait().catch(() => {})
     await container.start()
-    jobs.push({ container_id: container.id, filename: base, status: 'waiting' })
+    jobs.push({
+      container_id: container.id,
+      filename: base,
+      status: 'waiting',
+      code,
+      url: `https://getcroc.com/?code=${code}`,
+    })
   }
   return jobs
-}
-
-// Different croc versions phrase it differently; the getcroc URL is the most stable form
-export function parseCrocCode(logs: string) {
-  return (
-    /getcroc\.com\/\?code=([a-z0-9-]+)/.exec(logs)?.[1] ??
-    /your croc code is: (\S+)/.exec(logs)?.[1] ??
-    /\bcroc ([a-z0-9-]+)\b/.exec(logs)?.[1]
-  )
 }
 
 export async function getTransferJob(docker: Docker, id: string): Promise<TransferJob> {
@@ -87,10 +89,8 @@ export async function getTransferJob(docker: Docker, id: string): Promise<Transf
   }
   if (info.Config.Labels['crocle.job'] !== 'transfer') throw new TransferError('job not found', 404)
 
-  // The code line ends with a newline, so it is in the logs as soon as croc prints it
-  const raw = (await docker.getContainer(id).logs({ stdout: true, stderr: true })).toString()
   const done = !info.State.Running && info.State.ExitCode === 0
-  const code = parseCrocCode(raw)
+  const code = info.Config.Labels['crocle.code']
   return {
     container_id: info.Id,
     filename: info.Config.Labels['crocle.filename'] ?? '',
