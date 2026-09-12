@@ -46,8 +46,9 @@ export async function startTransfers(docker: Docker, relPath: string, copies: nu
     const code = `crocle-${randomBytes(4).toString('base64url')}`
     const container = await docker.createContainer({
       Image: CROC_IMAGE,
-      // Trailing slash makes croc treat a directory as a directory
-      Cmd: ['send', '--hash', 'imohash', `/data/${base}${isDir ? '/' : ''}`],
+      // Trailing slash makes croc treat a directory as a directory.
+      // --transport relay skips Tailcat, which can lock onto throttled public DERP
+      Cmd: ['send', '--hash', 'imohash-v2', '--transport', 'relay', `/data/${base}${isDir ? '/' : ''}`],
       // A TTY keeps logs free of Docker's stream headers
       Tty: true,
       Env: [

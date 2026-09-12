@@ -69,8 +69,9 @@ export async function startZip(docker: Docker, relPath: string) {
 
   const container = await docker.createContainer({
     Image: ZIP_IMAGE,
-    // -bsp1: progress to stdout; -mx=1: fast, most transfer data is already compressed
-    Cmd: ['7za', 'a', '-tzip', '-mx=1', '-bsp1', `/out/${partialName(zipName)}`, '/data/.'],
+    // -bsp1: progress to stdout; -mx=9: max compression, smaller archive, fewer bytes to send;
+    // -mmt=on: use every core, since -mx=9 is CPU-bound
+    Cmd: ['7za', 'a', '-tzip', '-mx=9', '-mmt=on', '-bsp1', `/out/${partialName(zipName)}`, '/data/.'],
     // A TTY makes 7za emit progress and keeps logs free of Docker's stream headers
     Tty: true,
     Labels: {

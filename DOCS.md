@@ -100,7 +100,8 @@ Flow:
 4. Any stale `.name.zip.partial` is deleted (7za `a` *appends*, so starting on a
    leftover partial would corrupt the archive).
 5. The 7za image is pulled on first use, then a container is created:
-   - `7za a -tzip -mx=1 -bsp1 /out/.name.zip.partial /data/.`
+   - `7za a -tzip -mx=9 -mmt=on -bsp1 /out/.name.zip.partial /data/.` (max
+     compression on all cores: smaller archive, fewer bytes to send)
    - folder bound `:ro` at `/data`, output dir at `/out`
    - 500 MB memory limit, `AutoRemove`
    - TTY so 7za emits progress and Docker stream headers are suppressed
@@ -152,8 +153,8 @@ Flow:
 2. Missing file/folder → 404. `copies` must be an integer between 1 and 10.
 3. The croc image is pulled on first use, then **one container per copy** is
    created and started:
-   - `croc send --hash imohash /data/<name>` (trailing `/` for folders, which
-     croc ships as a zip)
+   - `croc send --hash imohash-v2 --transport relay /data/<name>` (trailing `/`
+     for folders, which croc sends file by file; zip first to send one file)
    - target bound `:ro` at `/data/<name>`, 500 MB memory limit, `AutoRemove`
    - TTY so logs stay free of Docker's stream headers
    - labels: `crocle=true`, `crocle.job=transfer`, `crocle.filename`, `crocle.code`
@@ -169,9 +170,10 @@ the recipient finishes and the job drops out of the list.
 `DELETE /api/transfer/:id` force-removes a running container and revokes its
 code.
 
-Note: croc coordinates through its public relay and then prefers a direct P2P
-connection to the container. If the host is behind NAT without port mapping,
-transfers fall back to the (slower) relayed path.
+Note: `--transport relay` sends file data through croc's relay. croc's default
+`auto` transport also tries Tailcat (croc's built-in Tailscale data path), which
+can commit to throttled public DERP servers when no direct path forms, e.g.
+from a container behind Docker's NAT. The relay path is faster in practice.
 
 ### 7. Web UI
 
