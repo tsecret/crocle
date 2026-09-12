@@ -96,7 +96,11 @@ Flow:
 
 1. Path is resolved against `FILES_DIR`; anything escaping it is rejected (400).
 2. Missing folder → 404.
-3. If `<name>.zip` already exists, or a job for that output is already running → 409.
+3. The archive is named after the folder as a slug: lowercased, accents
+   stripped, every other run of non-letters/digits turned into `-`
+   (`Cities Skylines 2023` → `cities-skylines-2023.zip`; `archive.zip` if
+   nothing is left). If that zip already exists, or a job for it is already
+   running → 409. Two folders that slug the same (`A B`, `a-b`) share one name.
 4. Any stale `.name.zip.partial` is deleted (7za `a` *appends*, so starting on a
    leftover partial would corrupt the archive).
 5. The 7za image is pulled on first use, then a container is created:

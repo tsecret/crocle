@@ -28,6 +28,19 @@ export class ZipError extends Error {
 export const toHost = (p: string) => path.join(HOST_FILES_DIR, path.relative(FILES_DIR, p))
 const partialName = (zipName: string) => `.${zipName}.partial`
 
+// "Cities Skylines 2023" -> "cities-skylines-2023.zip": no spaces, accents or
+// punctuation to trip up shells and croc on the receiving side
+export function zipNameFor(folder: string) {
+  const slug = path
+    .basename(folder)
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '-')
+    .replace(/^-+|-+$/g, '')
+  return `${slug || 'archive'}.zip`
+}
+
 function resolveFolder(relPath: string) {
   const folder = path.resolve(FILES_DIR, relPath)
   if (folder === FILES_DIR || !folder.startsWith(FILES_DIR + path.sep)) {
@@ -53,7 +66,7 @@ export async function ensureImage(docker: Docker, image: string = ZIP_IMAGE) {
 export async function startZip(docker: Docker, relPath: string) {
   const folder = resolveFolder(relPath)
   const outDir = path.dirname(folder)
-  const zipName = `${path.basename(folder)}.zip`
+  const zipName = zipNameFor(folder)
   const finalPath = path.join(outDir, zipName)
   const partialPath = path.join(outDir, partialName(zipName))
 
@@ -103,11 +116,12 @@ export async function startZip(docker: Docker, relPath: string) {
 export async function ensureNoRunningZip(docker: Docker, relPath: string) {
   if (!relPath) return
   const folder = path.resolve(FILES_DIR, relPath)
-  const finalPath = path.join(path.dirname(folder), `${path.basename(folder)}.zip`)
+  const zipName = zipNameFor(folder)
+  const finalPath = path.join(path.dirname(folder), zipName)
   const running = await docker.listContainers({
     filters: { label: ['crocle.job=zip', `crocle.output=${finalPath}`], status: ['running'] },
   })
-  if (running.length) throw new ZipError(`${path.basename(folder)}.zip is being compressed`, 409)
+  if (running.length) throw new ZipError(`${zipName} is being compressed`, 409)
 }
 
 // Docker's log driver only flushes on newline, and 7za's progress line never
